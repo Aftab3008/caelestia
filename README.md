@@ -24,7 +24,36 @@ various apps.
 > }
 > ```
 
-## Installation (Arch Linux)
+## Installation
+
+### Fedora
+
+```sh
+git clone https://github.com/caelestia-dots/caelestia.git ~/.local/share/caelestia
+~/.local/share/caelestia/install-fedora.fish
+```
+
+The installer will:
+- Enable all required COPR repositories and RPM Fusion
+- Install all packages via `dnf`
+- Build and install `caelestia-cli` and `caelestia-shell` from source
+- Handle manual packages (sass, papirus-folders, darkly Qt style)
+- Symlink all dotfiles into place
+
+Optional components can be enabled with flags:
+
+```sh
+./install-fedora.fish --with-spotify --with-vscodium --with-zen
+```
+
+See `./install-fedora.fish --help` for all options.
+
+> [!NOTE]
+> Some packages are installed from COPR (community repositories) rather than
+> the official Fedora repos. See [manifest-fedora.toml](manifest-fedora.toml)
+> for the complete package list and COPR mappings.
+
+### Arch Linux
 
 Install the CLI from the AUR, then run `caelestia install`.
 
