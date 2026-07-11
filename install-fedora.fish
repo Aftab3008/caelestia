@@ -192,12 +192,13 @@ function enable_coprs
         "solopasha/hyprland" \
         "errornointernet/quickshell" \
         "atim/lazygit" \
-        "maveonair/jetbrains-mono-nerd-fonts" \
         "aquacash5/nerd-fonts" \
         "purian23/material-symbols-fonts" \
         "zawertun/scrapyard" \
         "celestelove/app2unit" \
         "brycensranch/gpu-screen-recorder-git"
+        # NOTE: maveonair/jetbrains-mono-nerd-fonts removed — returns 404 on Fedora 44.
+        # JetBrains Mono Nerd Font is installed via install_jetbrains_nerd_font() instead.
 
     for copr in $coprs
         log "  Enabling $copr..."
@@ -240,7 +241,7 @@ function install_core_packages
     #   bluez-utils  → doesn't exist on Fedora; utilities are included in 'bluez'
     #   polkit-gnome → dropped in Fedora 44; replaced by lxpolkit (works with Hyprland)
     sudo dnf install $dnf_opts \
-        fish git curl jq \
+        fish git curl jq unzip \
         NetworkManager bluez \
         pipewire pipewire-pulseaudio pipewire-alsa \
         pipewire-jack-audio-connection-kit wireplumber pavucontrol \
@@ -282,7 +283,8 @@ function install_core_packages
     if test "$fedora_version" -ge 43
         log 'Installing Hyprland from COPR...'
         sudo dnf install $dnf_opts \
-            hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk hyprpicker
+            hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk \
+            hyprpicker hyprland-qtutils
         or begin
             error 'Failed to install hyprland packages.'
             exit 1
@@ -375,7 +377,10 @@ end
 # ── Install Shell from upstream source ──────────────────────────────────────
 
 function install_shell
-    log 'Building and installing caelestia-shell...'
+    log 'Installing caelestia-shell...'
+    # caelestia-shell is a Quickshell QML configuration — NOT a cmake project.
+    # Quickshell loads it from ~/.config/quickshell/caelestia/.
+    # "cmake" was previously attempted here but the repo has no CMakeLists.txt.
 
     set -l qsh_dir "$config_home/quickshell"
     set -l dest "$qsh_dir/caelestia"
@@ -384,6 +389,7 @@ function install_shell
     if test -d "$dest/.git"
         log 'Updating existing shell clone...'
         git -C "$dest" pull --ff-only
+        or warn 'Shell update failed; using existing clone.'
     else
         log 'Cloning caelestia-shell...'
         git clone --depth=1 https://github.com/caelestia-dots/shell.git "$dest"
@@ -393,32 +399,22 @@ function install_shell
         end
     end
 
-    pushd "$dest"
+    # Install systemd user service for the shell.
+    # If the repo ships a service file, use it; otherwise create a minimal one.
+    set -l svc_dir "$HOME/.config/systemd/user"
+    mkdir -p "$svc_dir"
 
-    # Build and install via cmake
-    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/
-    or begin
-        error 'cmake configure failed.'
-        popd; return 1
+    if test -f "$dest/caelestia-shell.service"
+        install -Dm644 "$dest/caelestia-shell.service" "$svc_dir/caelestia-shell.service"
+    else
+        log 'Creating caelestia-shell.service...'
+        printf '[Unit]\nDescription=Caelestia Shell\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\n[Service]\nExecStart=qs -c caelestia\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=graphical-session.target\n' \
+            > "$svc_dir/caelestia-shell.service"
     end
 
-    cmake --build build
-    or begin
-        error 'cmake build failed.'
-        popd; return 1
-    end
-
-    sudo cmake --install build
-    or begin
-        error 'cmake install failed.'
-        popd; return 1
-    end
-
-    popd
-
-    # Enable and start the shell systemd service
-    systemctl --user enable --now caelestia-shell.service 2>/dev/null
-    or warn 'Could not enable caelestia-shell.service (continuing)'
+    systemctl --user daemon-reload
+    systemctl --user enable caelestia-shell.service 2>/dev/null
+    or warn 'Could not enable caelestia-shell.service (run: systemctl --user enable caelestia-shell.service)'
 
     success 'caelestia-shell installed.'
 end
@@ -452,10 +448,12 @@ function install_papirus_folders
 end
 
 function install_darkly
-    log 'Building and installing darkly Qt style...'
+    log 'Building and installing darkly Qt style (Qt6 only)...'
     # Build deps (installed by install_core_packages):
-    #   extra-cmake-modules kf6-kdecoration-devel kf6-kirigami-devel kf6-kcoreaddons-devel
+    #   extra-cmake-modules kdecoration-devel kf6-kirigami-devel kf6-kcoreaddons-devel
     #   cmake ninja-build gcc-c++ qt6-qtbase-devel
+    # NOTE: BUILD_QT5=OFF because Qt5 devel headers are not in Fedora 44 base repos.
+    #   Fedora 44 is Qt6-native. Qt5 Darkly support can be added manually if needed.
     set -l workdir (mktemp -d /tmp/darkly.XXXXXX)
     git clone --depth=1 https://github.com/Bali10050/Darkly.git "$workdir"
     or begin
@@ -464,7 +462,7 @@ function install_darkly
     end
     pushd "$workdir"
     mkdir -p build; cd build
-    cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_QT5=ON -DBUILD_QT6=ON
+    cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_QT5=OFF -DBUILD_QT6=ON
     or begin
         warn 'cmake configure for darkly failed.'
         popd; return 1
@@ -477,17 +475,27 @@ function install_darkly
     sudo make install
     popd
     rm -rf "$workdir"
-    success 'darkly Qt style installed.'
+    success 'darkly Qt6 style installed.'
 end
 
 
 function install_libcava_fallback
     log 'Building libcava from source (cava)...'
-    # Build deps for cava shared library
+    # Install all build deps including ncurses (required by cava cmake even for lib-only builds)
     sudo dnf install $dnf_opts \
-        fftw-devel iniparser-devel SDL2-devel \
+        fftw-devel iniparser-devel ncurses-devel SDL2-devel \
         alsa-lib-devel pulseaudio-libs-devel pipewire-devel sndio-devel
     or warn 'Some cava build deps failed (continuing anyway)'
+
+    # Fedora's iniparser.pc is named 'iniparser', but cava cmake looks for 'libiniparser'.
+    # Create a symlink so pkg-config finds it under the expected name.
+    for pc_dir in /usr/lib64/pkgconfig /usr/share/pkgconfig
+        if test -f "$pc_dir/iniparser.pc"
+            sudo ln -sf "$pc_dir/iniparser.pc" "$pc_dir/libiniparser.pc" 2>/dev/null
+            or true
+        end
+    end
+
     set -l workdir (mktemp -d /tmp/cava.XXXXXX)
     git clone --depth=1 https://github.com/karlstav/cava.git "$workdir"
     or begin
@@ -549,6 +557,53 @@ function install_bibata_cursor
     sudo gtk-update-icon-cache -f /usr/share/icons/Bibata-Modern-Classic 2>/dev/null
     or true
     success 'Bibata-Modern-Classic cursor theme installed.'
+end
+
+
+function install_jetbrains_nerd_font
+    log 'Checking for JetBrains Mono Nerd Font...'
+    if fc-list : family | grep -qi "JetBrainsMono"
+        log 'JetBrains Mono Nerd Font is already installed.'
+        return 0
+    end
+
+    log 'JetBrains Mono Nerd Font not found. Downloading from Nerd Fonts GitHub releases...'
+    set -l workdir (mktemp -d /tmp/jetbrains-nerd-font.XXXXXX)
+    set -l release_url (curl -fsSL \
+        'https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest' \
+        | python3 -c "import sys,json; assets=json.load(sys.stdin)['assets']; print(next(a['browser_download_url'] for a in assets if 'JetBrainsMono.zip' in a['name']))" \
+    )
+    or begin
+        warn 'Could not fetch JetBrains Mono Nerd Font release URL. Skipping.'
+        rm -rf "$workdir"
+        return 1
+    end
+
+    log "  Downloading $release_url ..."
+    curl -fsSL -o "$workdir/JetBrainsMono.zip" "$release_url"
+    or begin
+        warn 'Failed to download JetBrains Mono Nerd Font. Skipping.'
+        rm -rf "$workdir"
+        return 1
+    end
+
+    log '  Extracting font files...'
+    mkdir -p "$workdir/extracted"
+    unzip -q "$workdir/JetBrainsMono.zip" -d "$workdir/extracted"
+    or begin
+        warn 'Failed to extract JetBrains Mono Nerd Font. Skipping.'
+        rm -rf "$workdir"
+        return 1
+    end
+
+    log '  Installing font files to system fonts directory...'
+    sudo mkdir -p /usr/share/fonts/jetbrains-mono-nerd
+    sudo cp "$workdir/extracted/"*.ttf /usr/share/fonts/jetbrains-mono-nerd/ 2>/dev/null
+    sudo cp "$workdir/extracted/"*.otf /usr/share/fonts/jetbrains-mono-nerd/ 2>/dev/null
+    rm -rf "$workdir"
+
+    refresh_fonts
+    success 'JetBrains Mono Nerd Font installed.'
 end
 
 
@@ -812,9 +867,10 @@ function main
         install_papirus_folders
         install_darkly
         install_bibata_cursor
+        install_jetbrains_nerd_font
     else
-        warn '--core-only: skipping sass, materialyoucolor, papirus-folders, darkly, and cursor theme builds.'
-        warn '  Default cursor will be used until Bibata-Modern-Classic is installed manually.'
+        warn '--core-only: skipping sass, materialyoucolor, papirus-folders, darkly, cursor theme, and JetBrains Mono Nerd Font builds.'
+        warn '  Default cursor and font fallbacks will be used.'
     end
 
     # 5. Dotfiles

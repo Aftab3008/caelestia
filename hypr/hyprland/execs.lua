@@ -2,9 +2,19 @@ local vars = require("variables")
 local fn   = require("hyprland.functions")
 
 hl.on("hyprland.start", function()
+    -- CRITICAL: Export Wayland env vars into D-Bus and systemd user session.
+    -- Without this, apps launched via keybinds (Super+T, Super+W, etc.) silently
+    -- fail because they cannot connect to the Wayland compositor.
+    hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP=Hyprland DISPLAY")
+
     -- Keyring and auth
     hl.exec_cmd("gnome-keyring-daemon --start --components=secrets")
     hl.exec_cmd("/usr/bin/lxpolkit")  -- polkit-gnome dropped in Fedora 44; lxpolkit is the replacement
+
+    -- Ensure XDG desktop portals are running with the Hyprland portal active.
+    -- The sleep gives Hyprland a moment to register before portals try to connect.
+    hl.exec_cmd("sleep 1 && systemctl --user restart xdg-desktop-portal-hyprland")
+    hl.exec_cmd("sleep 2 && systemctl --user restart xdg-desktop-portal")
 
     -- Clipboard history
     hl.exec_cmd("wl-paste --type text --watch cliphist store")
