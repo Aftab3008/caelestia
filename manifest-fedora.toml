@@ -6,16 +6,19 @@
 # COPR repo definitions — each maps to one or more packages.
 # Format: repo_owner/repo_name = [packages...]
 [copr]
-# For Fedora 44+, use ashbuk/Hyprland-Fedora (solopasha/hyprland is outdated on F44).
-# For Fedora 41-43, solopasha/hyprland is the standard.
-# The install script auto-detects the Fedora version and picks the right one.
+# solopasha/hyprland: provides uwsm + cliphist on ALL Fedora versions.
+#   On Fedora 44+, the Hyprland package itself is outdated (0.51) in this COPR,
+#   so the install script uses ashbuk/Hyprland-Fedora for the Hyprland binary.
+#   Both COPRs are enabled simultaneously on Fedora 44+ (each provides different packages).
+# ashbuk/Hyprland-Fedora: provides up-to-date Hyprland (0.55.1+) for Fedora 43+.
+#   Auto-selected by the install script when VERSION_ID >= 44.
 "solopasha/hyprland" = ["uwsm", "cliphist"]
 "errornointernet/quickshell" = ["quickshell"]
 "atim/lazygit" = ["lazygit"]
 "maveonair/jetbrains-mono-nerd-fonts" = ["jetbrains-mono-nerd-fonts"]
 "aquacash5/nerd-fonts" = ["caskaydia-cove-nerd-fonts"]
 "purian23/material-symbols-fonts" = ["material-symbols-fonts"]
-"zawertun/scrapyard" = ["libcava"]
+"zawertun/scrapyard" = ["libcava"]  # May lag behind on F44; installer falls back to source build
 "celestelove/app2unit" = ["app2unit"]
 "brycensranch/gpu-screen-recorder-git" = ["gpu-screen-recorder"]
 

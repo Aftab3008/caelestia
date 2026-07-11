@@ -122,13 +122,15 @@ if test ! -f /etc/os-release
     exit 1
 end
 
-set -l distro_id (source /etc/os-release; echo "$ID")
+# /etc/os-release uses bash syntax (KEY="value"), so fish's 'source' fails.
+# Use awk to extract values instead.
+set -l distro_id (awk -F= '/^ID=/ {gsub(/"/,"",$2); print $2}' /etc/os-release)
 if test "$distro_id" != "fedora"
     error "This installer is for Fedora only. Detected: $distro_id"
     exit 1
 end
 
-set -l fedora_version (source /etc/os-release; echo "$VERSION_ID")
+set -l fedora_version (awk -F= '/^VERSION_ID=/ {gsub(/"/,"",$2); print $2}' /etc/os-release)
 
 success "Detected Fedora $fedora_version"
 
@@ -183,6 +185,7 @@ function enable_coprs
 
     set -l coprs \
         "$hyprland_copr" \
+        "solopasha/hyprland" \
         "errornointernet/quickshell" \
         "atim/lazygit" \
         "maveonair/jetbrains-mono-nerd-fonts" \
@@ -245,10 +248,13 @@ function install_core_packages
         qt5ct qt6ct qt5-qtstyleplugins kf6-frameworkintegration \
         libnotify grim slurp swappy fuzzel \
         ddcutil brightnessctl lm_sensors aubio libqalculate \
+        geoclue2 gammastep \
         cmake ninja-build gcc-c++ \
         python3-build python3-installer python3-hatch-vcs python3-pip \
         pkgconf-pkg-config pipewire-devel aubio-devel \
         wayland-protocols-devel hyprlang-devel \
+        qt6-qtdeclarative-devel qt6-qtbase-devel qt6-qtwayland-devel \
+        extra-cmake-modules kf6-kdecoration-devel kf6-kirigami-devel kf6-kcoreaddons-devel \
         nodejs npm
     or begin
         error 'Core package installation failed.'
@@ -276,14 +282,20 @@ function install_core_packages
         end
     end
 
-    # COPR packages
+    # COPR packages (batch — excluding libcava which has its own fallback)
     log 'Installing COPR packages...'
     sudo dnf install $dnf_opts \
         cliphist \
         jetbrains-mono-nerd-fonts caskaydia-cove-nerd-fonts material-symbols-fonts \
-        libcava app2unit gpu-screen-recorder \
+        app2unit gpu-screen-recorder \
         lazygit
     or warn 'Some COPR packages failed to install (continuing)'
+
+    # libcava — try COPR first, fall back to source build if no Fedora 44 build available
+    if not sudo dnf install $dnf_opts libcava
+        warn 'libcava not found in zawertun/scrapyard for this Fedora version. Attempting source build...'
+        install_libcava_fallback
+    end
 end
 
 
@@ -421,6 +433,9 @@ end
 
 function install_darkly
     log 'Building and installing darkly Qt style...'
+    # Build deps (installed by install_core_packages):
+    #   extra-cmake-modules kf6-kdecoration-devel kf6-kirigami-devel kf6-kcoreaddons-devel
+    #   cmake ninja-build gcc-c++ qt6-qtbase-devel
     set -l workdir (mktemp -d /tmp/darkly.XXXXXX)
     git clone --depth=1 https://github.com/Bali10050/Darkly.git "$workdir"
     or begin
@@ -443,6 +458,77 @@ function install_darkly
     popd
     rm -rf "$workdir"
     success 'darkly Qt style installed.'
+end
+
+
+function install_libcava_fallback
+    log 'Building libcava from source (cava)...'
+    # Build deps for cava shared library
+    sudo dnf install $dnf_opts \
+        fftw-devel iniparser-devel SDL2-devel \
+        alsa-lib-devel pulseaudio-libs-devel pipewire-devel sndio-devel
+    or warn 'Some cava build deps failed (continuing anyway)'
+    set -l workdir (mktemp -d /tmp/cava.XXXXXX)
+    git clone --depth=1 https://github.com/karlstav/cava.git "$workdir"
+    or begin
+        warn 'Failed to clone cava. libcava will be missing.'
+        return 1
+    end
+    pushd "$workdir"
+    cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DBUILD_SHARED_LIBS=ON
+    or begin
+        warn 'cava cmake configure failed.'
+        popd; return 1
+    end
+    cmake --build build
+    or begin
+        warn 'cava build failed.'
+        popd; return 1
+    end
+    sudo cmake --install build
+    sudo ldconfig
+    popd
+    rm -rf "$workdir"
+    success 'libcava built and installed from source.'
+end
+
+
+function install_bibata_cursor
+    log 'Installing Bibata-Modern-Classic cursor theme...'
+    # Check if already installed
+    if test -d /usr/share/icons/Bibata-Modern-Classic
+        log 'Bibata-Modern-Classic already installed.'
+        return 0
+    end
+    set -l workdir (mktemp -d /tmp/bibata-cursor.XXXXXX)
+    # Fetch latest release tarball from GitHub
+    set -l release_url (curl -fsSL \
+        'https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest' \
+        | python3 -c "import sys,json; assets=json.load(sys.stdin)['assets']; print(next(a['browser_download_url'] for a in assets if 'Modern-Classic.tar.xz' in a['name']))" \
+    )
+    or begin
+        warn 'Could not fetch Bibata cursor release URL. Skipping cursor install.'
+        rm -rf "$workdir"
+        return 1
+    end
+    log "  Downloading $release_url ..."
+    curl -fsSL -o "$workdir/bibata.tar.xz" "$release_url"
+    or begin
+        warn 'Failed to download Bibata cursor. Skipping.'
+        rm -rf "$workdir"
+        return 1
+    end
+    tar -xf "$workdir/bibata.tar.xz" -C "$workdir"
+    sudo install -d /usr/share/icons/Bibata-Modern-Classic
+    sudo cp -r "$workdir/Bibata-Modern-Classic/." /usr/share/icons/Bibata-Modern-Classic/
+    rm -rf "$workdir"
+    # Update icon cache
+    sudo gtk-update-icon-cache -f /usr/share/icons/Bibata-Modern-Classic 2>/dev/null
+    or true
+    success 'Bibata-Modern-Classic cursor theme installed.'
 end
 
 
@@ -485,7 +571,7 @@ end
 
 function install_vscodium
     log 'Installing VSCodium...'
-    if ! command -v codium >/dev/null
+    if not command -v codium >/dev/null
         # Use official VSCodium RPM repo
         sudo rpmkeys --import https://gitlab.com/paulcarroty/vscodium-deb-rpm-repo/-/raw/master/pub.gpg
         printf "[gitlab.com_paulcarroty_vscodium_repo]\nname=download.vscodium.com\nbaseurl=https://download.vscodium.com/rpms/\nenabled=1\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=https://gitlab.com/paulcarroty/vscodium-deb-rpm-repo/-/raw/master/pub.gpg\nmetadata_expire=1h" \
@@ -510,7 +596,7 @@ end
 
 function install_vscode
     log 'Installing VSCode...'
-    if ! command -v code >/dev/null
+    if not command -v code >/dev/null
         # Microsoft RPM repo
         sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
         printf "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\n" \
@@ -534,7 +620,7 @@ end
 
 function install_zed
     log 'Installing Zed editor...'
-    if ! command -v zed >/dev/null && ! command -v zed-editor >/dev/null
+    if not command -v zed >/dev/null; and not command -v zed-editor >/dev/null
         sudo dnf copr enable $dnf_opts pgdev/zed
         sudo dnf install $dnf_opts zed
     end
@@ -545,7 +631,7 @@ end
 
 function install_zen
     log 'Installing Zen Browser...'
-    if ! command -v zen-browser >/dev/null
+    if not command -v zen-browser >/dev/null
         sudo dnf copr enable $dnf_opts scottames/zen-browser
         sudo dnf install $dnf_opts zen-browser
     end
@@ -566,6 +652,10 @@ end
 
 function install_uwsm
     log 'Installing UWSM...'
+    # solopasha/hyprland COPR is the source for uwsm on all Fedora versions.
+    # Ensure it is enabled even if ashbuk/Hyprland-Fedora is being used for Hyprland itself.
+    sudo dnf copr enable $dnf_opts solopasha/hyprland
+    or warn 'Could not re-enable solopasha/hyprland for uwsm (may already be enabled)'
     sudo dnf install $dnf_opts uwsm
     if confirm_overwrite "$config_home/uwsm"
         ln -s "$dots_dir/uwsm" "$config_home/uwsm"
@@ -677,11 +767,17 @@ function main
     # 2. Packages
     install_core_packages
 
-    # Install quickshell explicitly (COPR)
+    # Install quickshell explicitly (errornointernet/quickshell COPR)
+    # Try the git snapshot first, fall back to stable. Both failures are fatal.
     log 'Installing quickshell...'
-    sudo dnf install $dnf_opts quickshell-git
-    or sudo dnf install $dnf_opts quickshell
-    or error 'Failed to install quickshell.'
+    if not sudo dnf install $dnf_opts quickshell-git
+        sudo dnf install $dnf_opts quickshell
+        or begin
+            error 'Failed to install quickshell (tried quickshell-git and quickshell).'
+            error 'Ensure errornointernet/quickshell COPR is enabled and has a Fedora 44 build.'
+            exit 1
+        end
+    end
 
     refresh_fonts
 
@@ -689,11 +785,17 @@ function main
     install_cli
     install_shell
 
-    # 4. Manual packages
-    install_sass
-    install_materialyoucolor
-    install_papirus_folders
-    install_darkly
+    # 4. Manual packages (skipped with --core-only)
+    if not set -q _flag_core_only
+        install_sass
+        install_materialyoucolor
+        install_papirus_folders
+        install_darkly
+        install_bibata_cursor
+    else
+        warn '--core-only: skipping sass, materialyoucolor, papirus-folders, darkly, and cursor theme builds.'
+        warn '  Default cursor will be used until Bibata-Modern-Classic is installed manually.'
+    end
 
     # 5. Dotfiles
     install_dotfiles
