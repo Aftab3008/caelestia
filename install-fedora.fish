@@ -188,8 +188,6 @@ function enable_coprs
     log 'Enabling COPR repositories...'
 
     set -l coprs \
-        "$hyprland_copr" \
-        "solopasha/hyprland" \
         "errornointernet/quickshell" \
         "atim/lazygit" \
         "aquacash5/nerd-fonts" \
@@ -200,12 +198,27 @@ function enable_coprs
         # NOTE: maveonair/jetbrains-mono-nerd-fonts removed — returns 404 on Fedora 44.
         # JetBrains Mono Nerd Font is installed via install_jetbrains_nerd_font() instead.
 
+    # Select correct Hyprland COPR based on Fedora version:
+    # - Fedora 44+: ashbuk/Hyprland-Fedora (and completely remove solopasha/hyprland to prevent conflicts)
+    # - Fedora < 44: solopasha/hyprland
+    if test "$fedora_version" -ge 44
+        set -a coprs "ashbuk/Hyprland-Fedora"
+        log 'Fedora 44+: Removing solopasha/hyprland COPR to prevent package conflicts...'
+        sudo dnf copr remove -y solopasha/hyprland 2>/dev/null; or true
+        sudo rm -f /etc/yum.repos.d/*solopasha-hyprland*.repo 2>/dev/null; or true
+        sudo rm -f "/etc/yum.repos.d/_copr:copr.fedorainfracloud.org:solopasha:hyprland.repo" 2>/dev/null; or true
+        sudo rm -f "/etc/yum.repos.d/copr:copr.fedorainfracloud.org:solopasha:hyprland.repo" 2>/dev/null; or true
+    else
+        set -a coprs "solopasha/hyprland"
+    end
+
     for copr in $coprs
         log "  Enabling $copr..."
         sudo dnf copr enable $dnf_opts "$copr"
         or warn "  Failed to enable $copr (continuing anyway)"
     end
 end
+
 
 
 # ── RPM Fusion ───────────────────────────────────────────────────────────────
@@ -282,7 +295,13 @@ function install_core_packages
     # On Fedora 41/42, try official repo first, fall back to COPR
     if test "$fedora_version" -ge 43
         log 'Installing Hyprland from COPR...'
-        sudo dnf install $dnf_opts \
+        # On Fedora 44+, explicitly ignore solopasha/hyprland COPR to prevent DNF from selecting
+        # its outdated packages which conflict with ashbuk's newer Qt6 API packages.
+        set -l extra_opts
+        if test "$fedora_version" -ge 44
+            set extra_opts --disablerepo="copr:copr.fedorainfracloud.org:solopasha:hyprland" --disablerepo="_copr:copr.fedorainfracloud.org:solopasha:hyprland"
+        end
+        sudo dnf install $dnf_opts $extra_opts \
             hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk \
             hyprpicker hyprland-qtutils
         or begin
@@ -727,10 +746,12 @@ end
 
 function install_uwsm
     log 'Installing UWSM...'
-    # solopasha/hyprland COPR is the source for uwsm on all Fedora versions.
-    # Ensure it is enabled even if ashbuk/Hyprland-Fedora is being used for Hyprland itself.
-    sudo dnf copr enable $dnf_opts solopasha/hyprland
-    or warn 'Could not re-enable solopasha/hyprland for uwsm (may already be enabled)'
+    # solopasha/hyprland COPR is the source for uwsm on Fedora < 44.
+    # On Fedora 44+, UWSM is available in the official Fedora repositories.
+    if test "$fedora_version" -lt 44
+        sudo dnf copr enable $dnf_opts solopasha/hyprland
+        or warn 'Could not enable solopasha/hyprland for uwsm (may already be enabled)'
+    end
     sudo dnf install $dnf_opts uwsm
     if confirm_overwrite "$config_home/uwsm"
         ln -s "$dots_dir/uwsm" "$config_home/uwsm"
