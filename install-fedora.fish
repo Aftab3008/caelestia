@@ -296,11 +296,13 @@ function install_core_packages
         log 'Installing Hyprland from COPR...'
         sudo dnf install $dnf_opts \
             hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk \
-            hyprpicker hyprland-qtutils
+            hyprpicker
         or begin
             error 'Failed to install hyprland packages.'
             exit 1
         end
+        log 'Installing optional hyprland-qtutils...'
+        sudo dnf install $dnf_opts hyprland-qtutils 2>/dev/null; or warn 'hyprland-qtutils not found in repositories (skipping)'
     else
         if not sudo dnf install $dnf_opts hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk hyprpicker
             warn 'Trying Hyprland from COPR...'
