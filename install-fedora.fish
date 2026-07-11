@@ -205,7 +205,6 @@ function enable_coprs
         set -a coprs "ashbuk/Hyprland-Fedora"
         log 'Fedora 44+: Removing solopasha/hyprland COPR to prevent package conflicts...'
         sudo dnf copr remove -y solopasha/hyprland 2>/dev/null; or true
-        sudo rm -f /etc/yum.repos.d/*solopasha-hyprland*.repo 2>/dev/null; or true
         sudo rm -f "/etc/yum.repos.d/_copr:copr.fedorainfracloud.org:solopasha:hyprland.repo" 2>/dev/null; or true
         sudo rm -f "/etc/yum.repos.d/copr:copr.fedorainfracloud.org:solopasha:hyprland.repo" 2>/dev/null; or true
     else
@@ -295,13 +294,7 @@ function install_core_packages
     # On Fedora 41/42, try official repo first, fall back to COPR
     if test "$fedora_version" -ge 43
         log 'Installing Hyprland from COPR...'
-        # On Fedora 44+, explicitly ignore solopasha/hyprland COPR to prevent DNF from selecting
-        # its outdated packages which conflict with ashbuk's newer Qt6 API packages.
-        set -l extra_opts
-        if test "$fedora_version" -ge 44
-            set extra_opts --disablerepo="copr:copr.fedorainfracloud.org:solopasha:hyprland" --disablerepo="_copr:copr.fedorainfracloud.org:solopasha:hyprland"
-        end
-        sudo dnf install $dnf_opts $extra_opts \
+        sudo dnf install $dnf_opts \
             hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk \
             hyprpicker hyprland-qtutils
         or begin
