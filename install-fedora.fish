@@ -124,21 +124,21 @@ end
 
 # /etc/os-release uses bash syntax (KEY="value"), so fish's 'source' fails.
 # Use awk to extract values instead.
-set -l distro_id (awk -F= '/^ID=/ {gsub(/"/,"",$2); print $2}' /etc/os-release)
+set -g distro_id (awk -F= '/^ID=/ {gsub(/"/,"",$2); print $2}' /etc/os-release)
 if test "$distro_id" != "fedora"
     error "This installer is for Fedora only. Detected: $distro_id"
     exit 1
 end
 
-set -l fedora_version (awk -F= '/^VERSION_ID=/ {gsub(/"/,"",$2); print $2}' /etc/os-release)
+set -g fedora_version (awk -F= '/^VERSION_ID=/ {gsub(/"/,"",$2); print $2}' /etc/os-release)
 
 success "Detected Fedora $fedora_version"
 
 # Fedora 43+ dropped Hyprland from official repos.
 # Fedora 44: solopasha/hyprland is behind (0.51). Use ashbuk/Hyprland-Fedora.
-set -l hyprland_copr "solopasha/hyprland"
+set -g hyprland_copr "solopasha/hyprland"
 if test "$fedora_version" -ge 44
-    set hyprland_copr "ashbuk/Hyprland-Fedora"
+    set -g hyprland_copr "ashbuk/Hyprland-Fedora"
     warn "Fedora $fedora_version: using $hyprland_copr COPR for Hyprland (official repo dropped it, solopasha outdated)"
 else if test "$fedora_version" -ge 43
     warn "Fedora $fedora_version: Hyprland not in official repos. Using $hyprland_copr COPR."
@@ -147,17 +147,21 @@ end
 
 # ── Variables ────────────────────────────────────────────────────────────────
 
-set -q _flag_noconfirm; and set dnf_opts -y; or set dnf_opts ""
-set -l config_home $XDG_CONFIG_HOME
-test -z "$config_home"; and set config_home "$HOME/.config"
-set -l state_home $XDG_STATE_HOME
-test -z "$state_home"; and set state_home "$HOME/.local/state"
-set -l data_home $XDG_DATA_HOME
-test -z "$data_home"; and set data_home "$HOME/.local/share"
+# NOTE: use set -g (global) so all variables are visible inside functions.
+# "set -l" at script level is local to the script body and invisible in function calls.
+# "set dnf_opts" with NO value = empty list (expands to nothing in commands).
+# "set dnf_opts """ = list with one empty-string element → passed as "" to dnf → error!
+set -q _flag_noconfirm; and set -g dnf_opts -y; or set -g dnf_opts
+set -g config_home $XDG_CONFIG_HOME
+test -z "$config_home"; and set -g config_home "$HOME/.config"
+set -g state_home $XDG_STATE_HOME
+test -z "$state_home"; and set -g state_home "$HOME/.local/state"
+set -g data_home $XDG_DATA_HOME
+test -z "$data_home"; and set -g data_home "$HOME/.local/share"
 
 # Repo root (where this script lives)
-set -l dots_dir (dirname (realpath (status filename)))
-set -x CAELESTIA_DOTS "$dots_dir"
+set -g dots_dir (dirname (realpath (status filename)))
+set -gx CAELESTIA_DOTS "$dots_dir"
 
 
 # ── Banner ───────────────────────────────────────────────────────────────────
@@ -232,12 +236,15 @@ function install_core_packages
     log 'Installing core system and desktop packages...'
 
     # Base system packages
+    # NOTE:
+    #   bluez-utils  → doesn't exist on Fedora; utilities are included in 'bluez'
+    #   polkit-gnome → dropped in Fedora 44; replaced by lxpolkit (works with Hyprland)
     sudo dnf install $dnf_opts \
         fish git curl jq \
-        NetworkManager bluez bluez-utils \
+        NetworkManager bluez \
         pipewire pipewire-pulseaudio pipewire-alsa \
         pipewire-jack-audio-connection-kit wireplumber pavucontrol \
-        gnome-keyring polkit-gnome \
+        gnome-keyring lxpolkit \
         wl-clipboard ydotool trash-cli \
         inotify-tools xdg-user-dirs \
         google-noto-sans-fonts google-noto-sans-cjk-fonts google-noto-emoji-fonts \
@@ -252,14 +259,23 @@ function install_core_packages
         cmake ninja-build gcc-c++ \
         python3-build python3-installer python3-hatch-vcs python3-pip \
         pkgconf-pkg-config pipewire-devel aubio-devel \
-        wayland-protocols-devel hyprlang-devel \
-        qt6-qtdeclarative-devel qt6-qtbase-devel qt6-qtwayland-devel \
-        extra-cmake-modules kf6-kdecoration-devel kf6-kirigami-devel kf6-kcoreaddons-devel \
+        wayland-protocols-devel \
         nodejs npm
     or begin
         error 'Core package installation failed.'
         exit 1
     end
+
+    # Build-only devel headers (non-fatal — missing ones are worked around in build functions)
+    # kf6-kdecoration-devel does NOT exist; KDecoration2 is 'kdecoration-devel' on Fedora.
+    # hyprlang-devel comes from the Hyprland COPR — installed after COPR setup.
+    log 'Installing build dependencies (devel headers)...'
+    sudo dnf install $dnf_opts \
+        qt6-qtdeclarative-devel qt6-qtbase-devel qt6-qtwayland-devel \
+        extra-cmake-modules kdecoration-devel kf6-kirigami-devel kf6-kcoreaddons-devel
+    or warn 'Some build-only devel headers missing — caelestia-shell or darkly build may warn.'
+
+    # hyprlang-devel is in the Hyprland COPR; install after Hyprland packages.
 
     # Hyprland: on Fedora 44+ use ashbuk/Hyprland-Fedora COPR
     # On Fedora 41/42, try official repo first, fall back to COPR
@@ -281,6 +297,10 @@ function install_core_packages
             end
         end
     end
+
+    # hyprlang-devel is provided by the Hyprland COPR (now active after above install)
+    sudo dnf install $dnf_opts hyprlang-devel
+    or warn 'hyprlang-devel not found — caelestia-shell cmake may warn (non-fatal)'
 
     # COPR packages (batch — excluding libcava which has its own fallback)
     log 'Installing COPR packages...'
